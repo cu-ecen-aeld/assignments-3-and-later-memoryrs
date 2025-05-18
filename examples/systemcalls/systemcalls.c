@@ -1,4 +1,10 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
 
 /**
  * @param cmd the command to execute with system()
@@ -16,6 +22,19 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    int res = system(cmd);
+    if (res == -1)
+    {
+        return false;
+    }
+    else
+    {
+        int status = WEXITSTATUS(res);
+        if (status != 0)
+        {
+            return false;
+        }
+    }
 
     return true;
 }
@@ -58,6 +77,31 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t pid = fork();
+
+    if (pid == -1)
+    {
+        perror("Fork failed");
+        return false;
+    }
+    else if (pid == 0)
+    {
+        execv(command[0], command);
+        // If execv returns, an error occurred
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        // Parent process
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status))
+        {
+            int exit_status = WEXITSTATUS(status);
+            va_end(args);
+            return exit_status == 0;
+        }
+    }
 
     va_end(args);
 
@@ -92,6 +136,44 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+
+    pid_t pid = fork();
+    if (pid == -1)
+    {
+        perror("Fork failed");
+        return false;
+    }
+    else if (pid == 0)
+    {
+        // Child process
+        int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+        if (fd == -1)
+        {
+            perror("Failed to open outputfile");
+            return false;
+        }
+        // Redirect stdout to the file
+        if (dup2(fd, 1) == -1)
+        {
+            perror("Failed to redirect stdout");
+            return false;
+        }
+        close(fd); // Close the file descriptor after duplicating it
+        execv(command[0], command);
+        exit(EXIT_FAILURE); // If execv returns, an error occurred
+    }
+    else
+    {
+        // Parent process
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status))
+        {
+            int exit_status = WEXITSTATUS(status);
+            va_end(args);
+            return exit_status == 0;
+        }
+    }
 
     va_end(args);
 
