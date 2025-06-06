@@ -8,7 +8,6 @@ start() {
     echo "Starting aesdsocket..."
     start-stop-daemon -S -n aesdsocket -a /usr/bin/aesdsocket -- -d
     echo "OK"
-    ;;
 }
 
 stop() {
