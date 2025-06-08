@@ -9,3 +9,4 @@ test.sh.log
 actions-runner/
 server/aesdsocket
 server/valgrind-out.txt
+server/aesdsocket_old.c
