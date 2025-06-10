@@ -10,4 +10,5 @@ actions-runner/
 server/aesdsocket
 server/valgrind-out.txt
 server/aesdsocket_old.c
+server/queue.h
 aesdsocket
