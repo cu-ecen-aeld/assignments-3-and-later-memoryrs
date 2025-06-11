@@ -3,7 +3,7 @@ ifeq ($(CC),)
 endif
 
 ifeq ($(CFLAGS),)
-	CFLAGS = -g -Wall -
+	CFLAGS = -g -Wall -Werror
 endif
 
 ifeq ($(LDFLAGS),)
