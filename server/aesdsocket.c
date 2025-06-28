@@ -18,9 +18,15 @@
 #define PORT "9000"  // the port users will be connecting to
 #define BACKLOG 10   // how many pending connections queue will hold
 #define BUFFER_SIZE 512
-#define DATA_FILE "/var/tmp/aesdsocketdata"
 #define TS_BUFFER_SIZE 128
 #define TS_INTERVAL_IN_S 10 // the interval in seconds for the timer to append timestamps to the file
+
+#define USE_AESD_CHAR_DEVICE 1
+#ifdef USE_AESD_CHAR_DEVICE
+    #define DATA_FILE "/dev/aesdchar"
+#else
+    #define DATA_FILE "/var/tmp/aesdsocketdata"
+#endif
 
 
 struct list_data_s {
@@ -32,9 +38,11 @@ struct list_data_s {
 LIST_HEAD(listhead, list_data_s) head;
 
 pthread_mutex_t list_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-pthread_t thread_timer;
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#if !USE_AESD_CHAR_DEVICE
+pthread_t thread_timer;
+#endif
 
 int server_fd = -1;
 int running = 1;
@@ -148,6 +156,7 @@ void *handle_connection(void *arg) {
 }
 
 
+#if !USE_AESD_CHAR_DEVICE
 void *append_timestamp(void *arg) {
     while (running) {
 
@@ -180,6 +189,7 @@ void *append_timestamp(void *arg) {
 
     return NULL;
 }
+#endif
 
 
 int main(int argc, char *argv[]) {
@@ -265,9 +275,11 @@ int main(int argc, char *argv[]) {
 
     LIST_INIT(&head);
 
+#if !USE_AESD_CHAR_DEVICE
     if (pthread_create(&thread_timer, NULL, append_timestamp, NULL) != 0) {
         syslog(LOG_ERR, "Failed to create thread for timer");
     }
+#endif
 
     while (running) { // main accept() loop
         int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &addr_size);
@@ -307,8 +319,10 @@ int main(int argc, char *argv[]) {
 
     if (server_fd != -1) close(server_fd);
 
+#if !USE_AESD_CHAR_DEVICE
     pthread_cancel(thread_timer);
     pthread_join(thread_timer, NULL);
+#endif
 
     pthread_mutex_lock(&list_mutex);
 
@@ -327,7 +341,10 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_unlock(&list_mutex);
 
+#if !USE_AESD_CHAR_DEVICE
     remove(DATA_FILE);
+#endif
+
     closelog();
     return 0;
 }

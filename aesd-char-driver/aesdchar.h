@@ -5,6 +5,8 @@
  *      Author: Dan Walkes
  */
 
+#include "aesd-circular-buffer.h"
+
 #ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
 #define AESD_CHAR_DRIVER_AESDCHAR_H_
 
@@ -25,10 +27,10 @@
 
 struct aesd_dev
 {
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
     struct cdev cdev;     /* Char device structure      */
+    struct aesd_circular_buffer circ_buf; /* Circular buffer for AESD data */
+    struct aesd_buffer_entry working_entry; /* Entry for current write operation */
+    struct mutex lock;   /* Mutex to protect access to the device */
 };
 
 
