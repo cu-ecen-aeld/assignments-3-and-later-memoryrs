@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/slab.h> // kmalloc, kfree, krealloc
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -28,10 +29,7 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp) {
     PDEBUG("open");
-    struct aesd_dev *dev;
-    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
-    filp->private_data = dev;
-    filp->f_pos = 0;
+    filp->private_data = container_of(inode->i_cdev, struct aesd_dev, cdev);
     return 0;
 }
 
@@ -45,7 +43,6 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
     ssize_t retval = 0;
     size_t entry_offset = 0;
     struct aesd_buffer_entry *entry;
-    size_t bytes_read = 0;
     struct aesd_dev *dev = filp->private_data;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     // lock device to protect our data
@@ -133,6 +130,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         mutex_unlock(&dev->lock);
         return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
