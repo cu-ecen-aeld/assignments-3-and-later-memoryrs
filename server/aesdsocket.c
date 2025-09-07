@@ -14,6 +14,10 @@
 #include <sys/queue.h>
 #include <pthread.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
+
 
 #define PORT "9000"  // the port users will be connecting to
 #define BACKLOG 10   // how many pending connections queue will hold
@@ -105,6 +109,11 @@ void *handle_connection(void *arg) {
 
     pthread_cleanup_push(cleanup_handler, datap);
 
+    int file_fd = open(DATA_FILE, O_CREAT | O_APPEND | O_RDWR, S_IRWXU | S_IRGRP | S_IROTH);
+    if (file_fd == -1) {
+        syslog(LOG_ERR, "Failed to open device file %s: %s", DATA_FILE, strerror(errno));
+    }
+
     //receive data
     while (1) {
         bytes_received = recv(client_fd, buffer, BUFFER_SIZE, 0);
@@ -117,9 +126,37 @@ void *handle_connection(void *arg) {
             break;
         }
 
+        buffer[bytes_received] = '\0';
+
+        // Check for AESDCHAR_IOCSEEKTO:X,Y pattern
+        if (strncmp(buffer, "AESDCHAR_IOCSEEKTO:", 19) == 0) {
+            unsigned int write_cmd, write_cmd_offset;
+            if (sscanf(buffer + 19, "%u,%u", &write_cmd, &write_cmd_offset) == 2) {
+                if (file_fd < 0) {
+                    syslog(LOG_ERR, "Failed to open file for ioctl: %s", strerror(errno));
+                } else {
+                    struct aesd_seekto seekto;
+                    seekto.write_cmd = write_cmd;
+                    seekto.write_cmd_offset = write_cmd_offset;
+                    if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
+                        syslog(LOG_ERR, "Failed to perform ioctl: %s", strerror(errno));
+                    }
+
+                    char read_buf[BUFFER_SIZE];
+                    ssize_t n;
+                    while ((n = read(file_fd, read_buf, BUFFER_SIZE)) > 0) {
+                        send(tinfo->client_fd, read_buf, n, 0);
+                    }
+                    close(file_fd);
+                }
+            } else {
+                syslog(LOG_ERR, "Invalid ioctl command format from client");
+            }
+            continue;
+        }
+
         pthread_mutex_lock(&file_mutex);
 
-        int file_fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (file_fd == -1) {
             syslog(LOG_ERR, "Failed to open file for writing: %s", strerror(errno));
             pthread_mutex_unlock(&file_mutex);

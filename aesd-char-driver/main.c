@@ -19,6 +19,7 @@
 #include <linux/fs.h> // file_operations
 #include <linux/slab.h> // kmalloc, kfree, krealloc
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -27,17 +28,20 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
+
 int aesd_open(struct inode *inode, struct file *filp) {
     PDEBUG("open");
     filp->private_data = container_of(inode->i_cdev, struct aesd_dev, cdev);
     return 0;
 }
 
+
 int aesd_release(struct inode *inode, struct file *filp) {
     PDEBUG("release");
     filp->private_data = NULL;
     return 0;
 }
+
 
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos) {
     ssize_t retval = 0;
@@ -70,6 +74,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
         mutex_unlock(&dev->lock);
         return retval;
 }
+
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos) {
     ssize_t retval = -ENOMEM;
@@ -131,16 +136,100 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         return retval;
 }
 
+
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence) {
+    struct aesd_dev *dev = filp->private_data;
+    loff_t newpos;
+    loff_t total_size = 0;
+    int i = 0;
+    struct aesd_buffer_entry *entry;
+
+    // Lock the device to safely access the circular buffer
+    if (mutex_lock_interruptible(&dev->lock))
+        return -ERESTARTSYS;
+
+    // Sum up the sizes of all valid entries in the circular buffer
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->circ_buf, i) {
+        if (entry->buffptr)
+            total_size += entry->size;
+    }
+
+    switch (whence) {
+        case SEEK_SET:
+            newpos = offset;
+            break;
+        case SEEK_CUR:
+            newpos = filp->f_pos + offset;
+            break;
+        case SEEK_END:
+            newpos = total_size + offset;
+            break;
+        default:
+            mutex_unlock(&dev->lock);
+            return -EINVAL;
+    }
+
+    if (newpos < 0) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    filp->f_pos = newpos;
+    mutex_unlock(&dev->lock);
+    return newpos;
+}
+
+
+long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+    struct aesd_dev *dev = filp->private_data;
+    long ret = 0;
+    struct aesd_seekto seekto;
+    struct aesd_buffer_entry *entry = NULL;
+    int command_index = 0;
+    int trav = dev->circ_buf.out_offs;
+    int byte_count = 0;
+
+    if (cmd == AESDCHAR_IOCSEEKTO) {
+        if (copy_from_user(&seekto, (struct aesd_seekto*) arg, sizeof(struct aesd_seekto)))
+            return -EFAULT;
+
+        command_index = seekto.write_cmd;
+        command_index = (command_index + dev->circ_buf.out_offs) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        if ((command_index > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || (seekto.write_cmd_offset > dev->circ_buf.entry[command_index].size)) {
+            ret = -EINVAL;
+            goto unlock;
+        }
+
+        // Lock the device while processing the circular buffer
+        if (mutex_lock_interruptible(&dev->lock))
+            return -ERESTARTSYS;
+
+        while(trav != command_index) {
+            byte_count += dev->circ_buf.entry[trav].size;
+            trav = (trav + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        }
+
+        // Update the file position with the computed offset
+        filp->f_pos = byte_count + seekto.write_cmd_offset;
+        mutex_unlock(&dev->lock);
+    }
+    unlock:
+        return ret;
+}
+
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek  =  aesd_llseek,
+    .unlocked_ioctl = aesd_unlocked_ioctl,
 };
 
-static int aesd_setup_cdev(struct aesd_dev *dev)
-{
+
+static int aesd_setup_cdev(struct aesd_dev *dev) {
     int err, devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_init(&dev->cdev, &aesd_fops);
@@ -154,9 +243,7 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
 }
 
 
-
-int aesd_init_module(void)
-{
+int aesd_init_module(void) {
     dev_t dev = 0;
     int result;
     result = alloc_chrdev_region(&dev, aesd_minor, 1,
@@ -188,8 +275,8 @@ int aesd_init_module(void)
 
 }
 
-void aesd_cleanup_module(void)
-{
+
+void aesd_cleanup_module(void) {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
