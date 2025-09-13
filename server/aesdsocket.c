@@ -145,7 +145,7 @@ void *handle_connection(void *arg) {
                     char read_buf[BUFFER_SIZE];
                     ssize_t n;
                     while ((n = read(file_fd, read_buf, BUFFER_SIZE)) > 0) {
-                        send(tinfo->client_fd, read_buf, n, 0);
+                        send(datap->client_fd, read_buf, n, 0);
                     }
                     close(file_fd);
                 }
